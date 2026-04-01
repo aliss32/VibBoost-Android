@@ -5,20 +5,25 @@ plugins {
 
 android {
     namespace = "com.alissgmr.vibboost"
-    compileSdk = 34
+    compileSdk = 35 // Android 15/16 desteği için güncellendi
 
     defaultConfig {
         applicationId = "com.alissgmr.vibboost"
-        minSdk = 28 // DynamicsProcessing Android 9 (API 28) ve uzeri ister
-        targetSdk = 34
+        minSdk = 28 // DynamicsProcessing (Wavelet Motoru) için şart
+        targetSdk = 35
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0-PRO-WAVELET"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
     compileOptions {
@@ -31,7 +36,11 @@ android {
 }
 
 dependencies {
+    // AndroidX Core ve UI Bileşenleri
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.10.0")
+    implementation("com.google.android.material:material:1.11.0")
+    
+    // Arka plan servisi ve bildirimler için gerekli
+    implementation("androidx.lifecycle:lifecycle-service:2.7.0")
 }
