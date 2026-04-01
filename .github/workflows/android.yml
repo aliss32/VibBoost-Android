@@ -20,14 +20,14 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew || (gradle wrapper && chmod +x gradlew)
+    - name: Ensure Executable
+      run: chmod +x gradlew || (gradle wrapper --gradle-version 8.5 && chmod +x gradlew)
 
-    - name: Build Debug APK
-      run: ./gradlew assembleDebug --no-daemon --stacktrace
+    - name: Clean and Build
+      run: ./gradlew clean assembleDebug --no-daemon --stacktrace --warning-mode all
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: VibBoost-Debug-APK
+        name: VibBoost-v1-Debug
         path: app/build/outputs/apk/debug/app-debug.apk
