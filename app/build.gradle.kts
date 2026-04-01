@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.alissgmr.vibboost"
-        minSdk = 26
+        minSdk = 28 // DynamicsProcessing Android 9 (API 28) ve uzeri ister
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
@@ -31,7 +31,6 @@ android {
 }
 
 dependencies {
-    // Sadece en gerekli kütüphaneler, versiyon çakışmasını önlemek için sabitlendi
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.10.0")
