@@ -22,14 +22,11 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Force Gradle 8.5 Setup
-      uses: gradle/gradle-build-action@v3
-      with:
-        gradle-version: 8.5
-        distribution-type: bin
-
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+    - name: Force Create Gradle Wrapper
+      run: |
+        # Eğer gradlew dosyası yoksa veya bozuksa, Gradle 8.5 ile yeniden oluştur
+        gradle wrapper --gradle-version 8.5 --distribution-type bin
+        chmod +x gradlew
 
     - name: Clean & Assemble Debug APK
       run: ./gradlew clean assembleDebug --no-daemon --stacktrace
