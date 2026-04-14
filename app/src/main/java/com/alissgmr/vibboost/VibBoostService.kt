@@ -12,7 +12,11 @@ import kotlin.math.max
 
 class VibBoostService : Service() {
 
-    companion object { var isRunning = false }
+    companion object { 
+        var isRunning = false 
+        // UI'ın anlık verileri okuyabilmesi için dinleyici
+        var hapticListener: ((intensity: Int, duration: Long) -> Unit)? = null
+    }
 
     private var visualizer: Visualizer? = null
     private var vibrator: Vibrator? = null
@@ -20,11 +24,11 @@ class VibBoostService : Service() {
     // --- NOTHING PHONE 1 HARDWARE AYARLARI ---
     private val NOISE_GATE = 30f       
     private val BASS_CEILING = 180f    
-    private val VIB_DURATION = 150L    // Sert ve sürekli bir his için MS değeri artırıldı
 
     // Tık-tık engelleme (Anti-Stutter) değişkenleri
     private var lastVibTime = 0L
     private var currentAmplitude = 0
+    private var currentDuration = 0L
 
     override fun onBind(intent: Intent?) = null
 
@@ -42,7 +46,6 @@ class VibBoostService : Service() {
             .setOngoing(true)
             .build()
         
-        // Android 14+ (API 34) Foreground Service Type zorunluluğu
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
@@ -59,7 +62,7 @@ class VibBoostService : Service() {
     private fun initializeRawEngine() {
         try {
             visualizer = Visualizer(0).apply {
-                captureSize = Visualizer.getCaptureSizeRange()[1] // 1024 (Derin baslar için)
+                captureSize = Visualizer.getCaptureSizeRange()[1]
                 
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, s: Int) {}
@@ -83,25 +86,41 @@ class VibBoostService : Service() {
         if (bassLevel < NOISE_GATE) {
             vibrator?.cancel()
             currentAmplitude = 0
+            // Ses kesildiğinde butonu sıfırlamak için UI'a 0 gönder
+            hapticListener?.invoke(0, 0L)
             return
         }
 
         val mappedIntensity = ((bassLevel / BASS_CEILING) * 255).toInt()
         val finalIntensity = mappedIntensity.coerceIn(1, 255)
         
-        val now = System.currentTimeMillis()
+        // --- DİNAMİK SÜRE (DURATION) AYARLAMASI ---
+        // Şiddete göre titreşim süresini belirliyoruz
+        val dynamicDuration = when {
+            finalIntensity > 200 -> 200L // En sert vuruşlar
+            finalIntensity > 150 -> 150L // Orta-sert
+            finalIntensity > 100 -> 100L // Normal
+            else -> 60L                  // Hafif tıkırtılar
+        }
         
-        // --- TIK-TIK ENGELLEME ALGORİTMASI ---
-        // Motor zaten çalışıyorsa ve şiddet değişimi %10'dan azsa, yeni komut gönderme.
-        // Bu sayede motor fren yapıp tekrar başlamaz (tık-tık engellenir), uzun duration sayesinde kesintisiz akar.
-        if (now - lastVibTime < 80 && abs(finalIntensity - currentAmplitude) < 15) {
+        val now = System.currentTimeMillis()
+        val timeSinceLast = now - lastVibTime
+        
+        // --- GELİŞMİŞ TIK-TIK ENGELLEYİCİ ---
+        // Eğer motor hala bir önceki titreşimi gerçekleştiriyorsa ve yeni gelen ses
+        // aniden çok yüksek bir patlama değilse, araya girip motoru frenleme.
+        if (timeSinceLast < currentDuration && finalIntensity < currentAmplitude + 25) {
             return
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator?.vibrate(VibrationEffect.createOneShot(VIB_DURATION, finalIntensity))
+            vibrator?.vibrate(VibrationEffect.createOneShot(dynamicDuration, finalIntensity))
             lastVibTime = now
             currentAmplitude = finalIntensity
+            currentDuration = dynamicDuration
+            
+            // UI'ı güncellemek için veriyi yolla
+            hapticListener?.invoke(finalIntensity, dynamicDuration)
         }
     }
 
@@ -117,6 +136,7 @@ class VibBoostService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        hapticListener = null // Hafıza sızıntısını önle
         visualizer?.enabled = false
         visualizer?.release()
         vibrator?.cancel()
