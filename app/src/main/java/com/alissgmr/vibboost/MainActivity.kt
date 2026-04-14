@@ -4,115 +4,147 @@ import android.Manifest
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
-import android.os.Bundle
-import android.util.TypedValue
+import android.os.*
+import android.view.Choreographer
 import android.view.Gravity
-import android.widget.Button
-import android.widget.LinearLayout
+import android.view.View
+import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var actionBtn: Button
+    private lateinit var rootLayout: LinearLayout
+    private var currentHue = 0f // Gökkuşağı için kaldığı yeri tutar
+    
+    // Anlık hedef değerler
+    private var targetIntensity = 0
+    private var targetDuration = 0L
+    
+    // Smooth takip değişkenleri (Ease-out için)
+    private var currentDisplayIntensity = 0f
+    private val smoothingFactor = 0.15f // Ease-out yumuşaklığı (0.1 - 0.3 ideal)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        val root = LinearLayout(this).apply {
+        setupUI()
+        startAnimationLoop() // 120Hz Döngüsünü başlat
+    }
+
+    private fun setupUI() {
+        rootLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#121212"))
+            setBackgroundColor(Color.BLACK) // Varsayılan: AMOLED Siyah
         }
 
-        // Yuvarlak buton tasarımı
-        val circleShape = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(Color.parseColor("#1DB954")) // Spotify yeşili gibi tatlı bir renk
+        // Tema Seçici (Alt Kısım)
+        val themeLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 50, 0, 0)
+        }
+
+        val themes = mapOf(
+            "AMOLED" to "#000000",
+            "WHITE" to "#FFFFFF",
+            "DEEP BLUE" to "#0D47A1",
+            "FOREST" to "#1B5E20"
+        )
+
+        themes.forEach { (name, color) ->
+            val tBtn = Button(this).apply {
+                text = name
+                textSize = 10f
+                setOnClickListener { rootLayout.setBackgroundColor(Color.parseColor(color)) }
+            }
+            themeLayout.addView(tBtn)
         }
 
         actionBtn = Button(this).apply {
-            background = circleShape
-            setTextColor(Color.WHITE)
-            textSize = 16f
-            isAllCaps = true
-            
-            // Butonu tam bir daire yapmak için dp cinsinden boyut veriyoruz (örn: 250dp x 250dp)
-            val sizeInPx = TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, 250f, resources.displayMetrics
-            ).toInt()
-            layoutParams = LinearLayout.LayoutParams(sizeInPx, sizeInPx)
-            
-            text = if (VibBoostService.isRunning) "STOP ENGINE" else "START BASS ENGINE"
-            
-            setOnClickListener {
-                val intent = Intent(this@MainActivity, VibBoostService::class.java)
-                if (!VibBoostService.isRunning) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(intent)
-                    } else {
-                        startService(intent)
-                    }
-                    text = "AWAITING BASS..."
-                    circleShape.setColor(Color.parseColor("#E91E63")) // Çalışırken Pembe/Kırmızı
-                } else {
-                    stopService(intent)
-                    resetButtonState()
-                }
+            val size = (resources.displayMetrics.density * 250).toInt()
+            layoutParams = LinearLayout.LayoutParams(size, size)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.DKGRAY)
             }
+            text = "START ENGINE"
+            setTextColor(Color.WHITE)
+            setOnClickListener { toggleService() }
         }
 
-        root.addView(actionBtn)
-        setContentView(root)
+        rootLayout.addView(actionBtn)
+        rootLayout.addView(themeLayout)
+        setContentView(rootLayout)
         
-        val permissions = mutableListOf(
-            Manifest.permission.RECORD_AUDIO, 
-            Manifest.permission.VIBRATE
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.VIBRATE, Manifest.permission.POST_NOTIFICATIONS), 1)
+    }
+
+    private fun toggleService() {
+        val intent = Intent(this, VibBoostService::class.java)
+        if (!VibBoostService.isRunning) {
+            startService(intent)
+            actionBtn.text = "ENGINE ACTIVE"
+        } else {
+            stopService(intent)
+            targetIntensity = 0
+            actionBtn.text = "START ENGINE"
         }
-        
-        ActivityCompat.requestPermissions(this, permissions.toTypedArray(), 1)
+    }
+
+    // 120Hz Akıcı Render Döngüsü
+    private fun startAnimationLoop() {
+        Choreographer.getInstance().postFrameCallback(object : Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                updateVisuals()
+                Choreographer.getInstance().postFrameCallback(this)
+            }
+        })
+    }
+
+    private fun updateVisuals() {
+        if (!VibBoostService.isRunning && targetIntensity == 0) {
+            actionBtn.translationX = 0f
+            actionBtn.translationY = 0f
+            return
+        }
+
+        // 1. Ease-Out Yumuşatma (Current value moves towards target)
+        currentDisplayIntensity += (targetIntensity - currentDisplayIntensity) * smoothingFactor
+
+        // 2. Shake Efekti (Intensity ile doğru orantılı)
+        if (currentDisplayIntensity > 5) {
+            val shake = (currentDisplayIntensity / 255f) * 35f
+            actionBtn.translationX = ((Math.random() - 0.5) * 2 * shake).toFloat()
+            actionBtn.translationY = ((Math.random() - 0.5) * 2 * shake).toFloat()
+            
+            // 3. Rainbow Efekti (Sadece bass varken döner)
+            // Güç arttıkça renk daha hızlı döner
+            currentHue = (currentHue + (currentDisplayIntensity / 50f)) % 360f
+            val color = Color.HSVToColor(floatArrayOf(currentHue, 0.8f, 0.9f))
+            (actionBtn.background as GradientDrawable).setColor(color)
+            
+            actionBtn.text = "PWR: ${targetIntensity}\n${targetDuration}ms"
+        } else {
+            // Bass yokken durul
+            actionBtn.translationX = 0f
+            actionBtn.translationY = 0f
+            if (VibBoostService.isRunning) actionBtn.text = "LISTENING..."
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        // Uygulama ekrandayken servisteki dinleyiciyi bağla
         VibBoostService.hapticListener = { intensity, duration ->
-            runOnUiThread {
-                if (VibBoostService.isRunning) {
-                    if (intensity > 0) {
-                        // Canlı veriyi butona yaz
-                        actionBtn.text = "PWR: $intensity\nTIME: ${duration}ms\n\nTAP TO STOP"
-                        
-                        // Şiddete göre sallanma (Shake) efekti oluştur
-                        // Güç ne kadar yüksekse, sallanma genliği o kadar artar
-                        val shakeAmplitude = (intensity / 255f) * 40f // Maksimum 40 piksel titreme
-                        actionBtn.translationX = ((Math.random() - 0.5) * 2 * shakeAmplitude).toFloat()
-                        actionBtn.translationY = ((Math.random() - 0.5) * 2 * shakeAmplitude).toFloat()
-                    } else {
-                        // Ses yoksa butonu merkezle
-                        actionBtn.translationX = 0f
-                        actionBtn.translationY = 0f
-                        actionBtn.text = "LISTENING..."
-                    }
-                }
-            }
+            targetIntensity = intensity
+            targetDuration = duration
         }
     }
 
     override fun onPause() {
         super.onPause()
-        // Uygulama arka plana atıldığında UI güncellemelerini durdur (Batarya tasarrufu)
         VibBoostService.hapticListener = null
-    }
-
-    private fun resetButtonState() {
-        actionBtn.translationX = 0f
-        actionBtn.translationY = 0f
-        actionBtn.text = "START BASS ENGINE"
-        (actionBtn.background as GradientDrawable).setColor(Color.parseColor("#1DB954"))
     }
 }
