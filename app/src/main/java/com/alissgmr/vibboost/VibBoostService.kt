@@ -14,18 +14,14 @@ class VibBoostService : Service() {
 
     companion object { 
         var isRunning = false 
-        // UI'ın anlık verileri okuyabilmesi için dinleyici
         var hapticListener: ((intensity: Int, duration: Long) -> Unit)? = null
     }
 
     private var visualizer: Visualizer? = null
     private var vibrator: Vibrator? = null
-    
-    // --- NOTHING PHONE 1 HARDWARE AYARLARI ---
-    private val NOISE_GATE = 30f       
+    private val NOISE_GATE = 25f // Biraz daha hassaslaştırdık
     private val BASS_CEILING = 180f    
 
-    // Tık-tık engelleme (Anti-Stutter) değişkenleri
     private var lastVibTime = 0L
     private var currentAmplitude = 0
     private var currentDuration = 0L
@@ -40,8 +36,8 @@ class VibBoostService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = NotificationCompat.Builder(this, "VibBoostChannel")
-            .setContentTitle("VibBoost Aktif")
-            .setContentText("Arka planda bas frekansları dinleniyor...")
+            .setContentTitle("VibBoost Pro Aktif")
+            .setContentText("120Hz Akıcı Görselleştirme Hazır")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .build()
@@ -63,17 +59,11 @@ class VibBoostService : Service() {
         try {
             visualizer = Visualizer(0).apply {
                 captureSize = Visualizer.getCaptureSizeRange()[1]
-                
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, s: Int) {}
-                    
                     override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, s: Int) {
                         if (fft == null) return
-
-                        val subBass = hypot(fft[2].toFloat(), fft[3].toFloat())
-                        val midBass = hypot(fft[4].toFloat(), fft[5].toFloat())
-                        val rawBass = max(subBass, midBass)
-
+                        val rawBass = max(hypot(fft[2].toFloat(), fft[3].toFloat()), hypot(fft[4].toFloat(), fft[5].toFloat()))
                         applyRawHaptics(rawBass)
                     }
                 }, Visualizer.getMaxCaptureRate(), false, true)
@@ -84,32 +74,22 @@ class VibBoostService : Service() {
 
     private fun applyRawHaptics(bassLevel: Float) {
         if (bassLevel < NOISE_GATE) {
-            vibrator?.cancel()
-            currentAmplitude = 0
-            // Ses kesildiğinde butonu sıfırlamak için UI'a 0 gönder
             hapticListener?.invoke(0, 0L)
             return
         }
 
-        val mappedIntensity = ((bassLevel / BASS_CEILING) * 255).toInt()
-        val finalIntensity = mappedIntensity.coerceIn(1, 255)
-        
-        // --- DİNAMİK SÜRE (DURATION) AYARLAMASI ---
-        // Şiddete göre titreşim süresini belirliyoruz
+        val finalIntensity = ((bassLevel / BASS_CEILING) * 255).toInt().coerceIn(1, 255)
         val dynamicDuration = when {
-            finalIntensity > 200 -> 200L // En sert vuruşlar
-            finalIntensity > 150 -> 150L // Orta-sert
-            finalIntensity > 100 -> 100L // Normal
-            else -> 60L                  // Hafif tıkırtılar
+            finalIntensity > 200 -> 200L
+            finalIntensity > 150 -> 150L
+            finalIntensity > 100 -> 100L
+            else -> 60L
         }
         
         val now = System.currentTimeMillis()
-        val timeSinceLast = now - lastVibTime
-        
-        // --- GELİŞMİŞ TIK-TIK ENGELLEYİCİ ---
-        // Eğer motor hala bir önceki titreşimi gerçekleştiriyorsa ve yeni gelen ses
-        // aniden çok yüksek bir patlama değilse, araya girip motoru frenleme.
-        if (timeSinceLast < currentDuration && finalIntensity < currentAmplitude + 25) {
+        if (now - lastVibTime < currentDuration && finalIntensity < currentAmplitude + 20) {
+            // UI'ı akıcı tutmak için veri göndermeye devam et ama titreşimi tetikleme
+            hapticListener?.invoke(finalIntensity, dynamicDuration)
             return
         }
 
@@ -118,28 +98,21 @@ class VibBoostService : Service() {
             lastVibTime = now
             currentAmplitude = finalIntensity
             currentDuration = dynamicDuration
-            
-            // UI'ı güncellemek için veriyi yolla
             hapticListener?.invoke(finalIntensity, dynamicDuration)
         }
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val chan = NotificationChannel("VibBoostChannel", "VibBoost Engine", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Background execution for haptic engine"
-                setShowBadge(false)
-            }
+            val chan = NotificationChannel("VibBoostChannel", "VibBoost Engine", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(chan)
         }
     }
 
     override fun onDestroy() {
         isRunning = false
-        hapticListener = null // Hafıza sızıntısını önle
-        visualizer?.enabled = false
+        hapticListener = null
         visualizer?.release()
-        vibrator?.cancel()
         super.onDestroy()
     }
 }
