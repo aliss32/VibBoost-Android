@@ -12,15 +12,9 @@ import androidx.core.app.ActivityCompat
 class MainActivity : AppCompatActivity() {
 
     private lateinit var visualizerBar: ProgressBar
-    private lateinit var statusText: TextView
-    private lateinit var mainBtn: Button
-
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val level = intent?.getIntExtra("lvl", 0) ?: 0
-            // Visualizer barını saniyede onlarca kez güncelliyoruz
-            visualizerBar.progress = level
-            statusText.text = "ENGINE ACTIVE | LOAD: %$level"
+            visualizerBar.progress = intent?.getIntExtra("lvl", 0) ?: 0
         }
     }
 
@@ -34,57 +28,30 @@ class MainActivity : AppCompatActivity() {
             setPadding(60, 60, 60, 60)
         }
 
-        statusText = TextView(this).apply {
-            text = "ENGINE STANDBY"
-            setTextColor(Color.WHITE)
-            textSize = 18f
-            setPadding(0, 0, 0, 50)
-        }
-
-        // --- CANLI VISUALIZER BAR ---
         visualizerBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
-            progress = 0
-            progressDrawable.setTint(Color.parseColor("#FF0055")) // Sert mod rengi: Magenta
-            scaleY = 8f // Barı daha kalın ve görünür yaptık
-            setPadding(0, 50, 0, 80)
+            progressDrawable.setTint(Color.RED)
+            scaleY = 10f
+            setPadding(0, 0, 0, 100)
         }
 
-        mainBtn = Button(this).apply {
-            text = "INITIALIZE HARD MODE"
-            setPadding(0, 40, 0, 40)
+        val btn = Button(this).apply {
+            text = "TOGGLE ENGINE"
             setOnClickListener {
                 val intent = Intent(this@MainActivity, VibBoostService::class.java)
-                if (!VibBoostService.isRunning) {
-                    startForegroundService(intent)
-                    text = "SHUTDOWN"
-                    setBackgroundColor(Color.RED)
-                } else {
-                    stopService(intent)
-                    text = "INITIALIZE HARD MODE"
-                    setBackgroundColor(Color.DKGRAY)
-                    visualizerBar.progress = 0
-                    statusText.text = "ENGINE STANDBY"
-                }
+                if (!VibBoostService.isRunning) startForegroundService(intent) else stopService(intent)
             }
         }
 
-        root.addView(statusText)
         root.addView(visualizerBar)
-        root.addView(mainBtn)
-        
+        root.addView(btn)
         setContentView(root)
         
-        // İzinleri alalım
-        ActivityCompat.requestPermissions(this, arrayOf(
-            Manifest.permission.RECORD_AUDIO, 
-            Manifest.permission.VIBRATE
-        ), 1)
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.VIBRATE), 1)
     }
 
     override fun onResume() {
         super.onResume()
-        // Broadcast dinleyiciyi kaydet
         registerReceiver(receiver, IntentFilter(VibBoostService.UPDATE_ACTION), RECEIVER_EXPORTED)
     }
 
