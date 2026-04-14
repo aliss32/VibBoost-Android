@@ -10,18 +10,15 @@ import kotlin.math.max
 
 class VibBoostService : Service() {
 
-    companion object {
-        var isRunning = false
-        const val UPDATE_ACTION = "com.alissgmr.vibboost.UPDATE"
-    }
+    companion object { var isRunning = false }
 
     private var visualizer: Visualizer? = null
     private var vibrator: Vibrator? = null
     
-    // Keskinlik Ayarları
-    private val noiseGate = 30f      // Bass yoksa sıfır titreşim
-    private val maxIntensity = 255   // Tam güç
-    private var lastTriggerTime = 0L
+    // --- LINEER ÇALIŞMA AYARLARI ---
+    private val noiseGate = 18f       // Bu seviyenin altındaki sesleri tamamen yok sayar
+    private val bassCeiling = 140f    // Maksimum titreşim için gereken bas üst sınırı
+    private var lastVibTime = 0L
 
     override fun onBind(intent: Intent?) = null
 
@@ -33,55 +30,65 @@ class VibBoostService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = NotificationCompat.Builder(this, "VibBoostChannel")
-            .setContentTitle("VibBoost: HARD TRIGGER")
+            .setContentTitle("VibBoost: LINEAR MODE")
+            .setContentText("Haptic engine following music envelope...")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .build()
         
         startForeground(1, notification)
         if (!isRunning) {
-            startDirectEngine()
+            initializeLinearEngine()
             isRunning = true
         }
         return START_STICKY
     }
 
-    private fun startDirectEngine() {
+    private fun initializeLinearEngine() {
         try {
             visualizer = Visualizer(0).apply {
-                captureSize = 128
+                captureSize = 128 // En hızlı analiz hızı
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, s: Int) {}
                     
                     override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, s: Int) {
                         if (fft == null) return
 
-                        // Saf Bass Analizi (40-100Hz)
-                        var bassPower = 0f
-                        for (i in 2..6 step 2) { 
+                        // Sadece derin bas frekanslarına (30Hz - 110Hz) odaklanıyoruz
+                        var bassMagnitude = 0f
+                        for (i in 2..8 step 2) { 
                             val mag = hypot(fft[i].toFloat(), fft[i+1].toFloat())
-                            bassPower = max(bassPower, mag)
+                            bassMagnitude = max(bassMagnitude, mag)
                         }
 
-                        // Sert Tetikleme: Yumuşatma (Smoothing) tamamen kaldırıldı
-                        if (bassPower > noiseGate) {
-                            val currentTime = System.currentTimeMillis()
-                            // Kesikliği önlemek için 30ms'lik bloklar halinde tam vuruş
-                            if (currentTime - lastTriggerTime > 30) {
-                                val level = ((bassPower / 120f) * 255).toInt().coerceIn(150, maxIntensity)
-                                vibrator?.vibrate(VibrationEffect.createOneShot(35, level))
-                                lastTriggerTime = currentTime
-                            }
-                        }
-
-                        val intent = Intent(UPDATE_ACTION).apply {
-                            putExtra("lvl", if (bassPower > noiseGate) ((bassPower / 120f) * 100).toInt().coerceIn(0, 100) else 0)
-                        }
-                        sendBroadcast(intent)
+                        applyLinearHaptics(bassMagnitude)
                     }
                 }, Visualizer.getMaxCaptureRate() / 2, false, true)
                 enabled = true
             }
         } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun applyLinearHaptics(bass: Float) {
+        val now = System.currentTimeMillis()
+
+        // Müzik ile uyum için 20ms'lik çok kısa pencerelerle çalışıyoruz
+        // Bu süre motorun tık-tık yapmadan akıcı titreşmesini sağlar
+        if (bass > noiseGate) {
+            if (now - lastVibTime > 20) {
+                // Lineer Dönüşüm: Bas şiddetini 0-255 arasına oranlıyoruz
+                val rawIntensity = ((bass / bassCeiling) * 255).toInt()
+                val intensity = rawIntensity.coerceIn(40, 255) // Minimum vuruş hissi için 40'tan başlar
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    // OneShot yerine motorun o anki şiddetini sürekli güncelleyen kısa darbeler
+                    vibrator?.vibrate(VibrationEffect.createOneShot(25, intensity))
+                }
+                lastVibTime = now
+            }
+        } else {
+            // Bas kesildiği anda titreşimi kes (Noise Gate aktif)
+            vibrator?.cancel()
+        }
     }
 
     private fun createNotificationChannel() {
@@ -95,6 +102,7 @@ class VibBoostService : Service() {
         isRunning = false
         visualizer?.enabled = false
         visualizer?.release()
+        vibrator?.cancel()
         super.onDestroy()
     }
 }
