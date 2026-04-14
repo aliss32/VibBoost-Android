@@ -15,10 +15,10 @@ class VibBoostService : Service() {
     private var visualizer: Visualizer? = null
     private var vibrator: Vibrator? = null
     
-    // --- LINEER ÇALIŞMA AYARLARI ---
-    private val noiseGate = 18f       // Bu seviyenin altındaki sesleri tamamen yok sayar
-    private val bassCeiling = 140f    // Maksimum titreşim için gereken bas üst sınırı
-    private var lastVibTime = 0L
+    // --- NOTHING PHONE 1 RAW HAPTIC MÜHENDİSLİĞİ ---
+    private val NOISE_GATE = 30f       // Bu genliğin altı = Kesin Sessizlik (Sıfır tolerans)
+    private val BASS_CEILING = 180f    // %100 motor gücü için referans bas tepe noktası
+    private val VIB_DURATION = 40L     // Callback hızına tam oturan, vuruntuyu (tık-tık) önleyen süre
 
     override fun onBind(intent: Intent?) = null
 
@@ -30,64 +30,64 @@ class VibBoostService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = NotificationCompat.Builder(this, "VibBoostChannel")
-            .setContentTitle("VibBoost: LINEAR MODE")
-            .setContentText("Haptic engine following music envelope...")
+            .setContentTitle("VibBoost: RAW BASS MODE")
+            .setContentText("Direct hardware mapping active...")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .build()
         
         startForeground(1, notification)
         if (!isRunning) {
-            initializeLinearEngine()
+            initializeRawEngine()
             isRunning = true
         }
         return START_STICKY
     }
 
-    private fun initializeLinearEngine() {
+    private fun initializeRawEngine() {
         try {
             visualizer = Visualizer(0).apply {
-                captureSize = 128 // En hızlı analiz hızı
+                // Derin basları (30-100Hz) görebilmek için çözünürlüğü maksimuma (genelde 1024) çıkarıyoruz.
+                captureSize = Visualizer.getCaptureSizeRange()[1] 
+                
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, s: Int) {}
                     
                     override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, s: Int) {
                         if (fft == null) return
 
-                        // Sadece derin bas frekanslarına (30Hz - 110Hz) odaklanıyoruz
-                        var bassMagnitude = 0f
-                        for (i in 2..8 step 2) { 
-                            val mag = hypot(fft[i].toFloat(), fft[i+1].toFloat())
-                            bassMagnitude = max(bassMagnitude, mag)
-                        }
+                        // 1024 Capture Size ile alt frekans indeksleri:
+                        // Index 2,3 (Bin 1) = ~43Hz (Sub-bass)
+                        // Index 4,5 (Bin 2) = ~86Hz (Mid-bass / Kick)
+                        val subBass = hypot(fft[2].toFloat(), fft[3].toFloat())
+                        val midBass = hypot(fft[4].toFloat(), fft[5].toFloat())
+                        
+                        // En güçlü bas frekansını baz alıyoruz
+                        val rawBass = max(subBass, midBass)
 
-                        applyLinearHaptics(bassMagnitude)
+                        applyRawHaptics(rawBass)
                     }
-                }, Visualizer.getMaxCaptureRate() / 2, false, true)
+                }, Visualizer.getMaxCaptureRate(), false, true) // Maksimum hızda, kesintisiz veri akışı
                 enabled = true
             }
         } catch (e: Exception) { e.printStackTrace() }
     }
 
-    private fun applyLinearHaptics(bass: Float) {
-        val now = System.currentTimeMillis()
-
-        // Müzik ile uyum için 20ms'lik çok kısa pencerelerle çalışıyoruz
-        // Bu süre motorun tık-tık yapmadan akıcı titreşmesini sağlar
-        if (bass > noiseGate) {
-            if (now - lastVibTime > 20) {
-                // Lineer Dönüşüm: Bas şiddetini 0-255 arasına oranlıyoruz
-                val rawIntensity = ((bass / bassCeiling) * 255).toInt()
-                val intensity = rawIntensity.coerceIn(40, 255) // Minimum vuruş hissi için 40'tan başlar
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    // OneShot yerine motorun o anki şiddetini sürekli güncelleyen kısa darbeler
-                    vibrator?.vibrate(VibrationEffect.createOneShot(25, intensity))
-                }
-                lastVibTime = now
-            }
-        } else {
-            // Bas kesildiği anda titreşimi kes (Noise Gate aktif)
+    private fun applyRawHaptics(bassLevel: Float) {
+        // Yumuşatma yok: Eşik altındaysa motoru anında durdur (bıçak gibi kes)
+        if (bassLevel < NOISE_GATE) {
             vibrator?.cancel()
+            return
+        }
+
+        // Lineer Dönüşüm: Bas şiddetini motorun çalışma yüzdesine (%1 - %100 arası -> 1-255) doğrudan haritala
+        val mappedIntensity = ((bassLevel / BASS_CEILING) * 255).toInt()
+        val finalIntensity = mappedIntensity.coerceIn(1, 255)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Önceki titreşim tamamen sönümlenmeden yenisi geldiği için "tık-tık" hissi kaybolur, 
+            // motor genliği müziğe göre pürüzsüzce artıp azalır.
+            val effect = VibrationEffect.createOneShot(VIB_DURATION, finalIntensity)
+            vibrator?.vibrate(effect)
         }
     }
 
