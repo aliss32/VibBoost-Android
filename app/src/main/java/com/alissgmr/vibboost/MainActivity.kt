@@ -11,87 +11,80 @@ import androidx.core.app.ActivityCompat
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var inBar: ProgressBar
-    private lateinit var outBar: ProgressBar
-    private lateinit var infoText: TextView
-    private lateinit var btn: Button
+    private lateinit var visualizerBar: ProgressBar
+    private lateinit var statusText: TextView
+    private lateinit var mainBtn: Button
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val input = intent?.getIntExtra("in", 0) ?: 0
-            val output = intent?.getIntExtra("out", 0) ?: 0
-            
-            // Canlı Telemetri Güncelleme
-            inBar.progress = input
-            outBar.progress = output
-            infoText.text = "ANALYSIS: %$input | MOTOR LOAD: %$output"
+            val level = intent?.getIntExtra("lvl", 0) ?: 0
+            // Visualizer barını saniyede onlarca kez güncelliyoruz
+            visualizerBar.progress = level
+            statusText.text = "ENGINE ACTIVE | LOAD: %$level"
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Minimalist & Endüstriyel Arayüz
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setBackgroundColor(Color.BLACK)
-            setPadding(50, 50, 50, 50)
+            setPadding(60, 60, 60, 60)
         }
 
-        val title = TextView(this).apply {
-            text = "VIB-BOOST MONITOR"
-            setTextColor(Color.WHITE)
-            textSize = 20f
-            setPadding(0, 0, 0, 100)
-        }
-
-        infoText = TextView(this).apply {
+        statusText = TextView(this).apply {
             text = "ENGINE STANDBY"
-            setTextColor(Color.parseColor("#00FFCC"))
-            setPadding(0, 0, 0, 20)
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            setPadding(0, 0, 0, 50)
         }
 
-        // Visualizer Barları
-        inBar = createBar(Color.CYAN)
-        outBar = createBar(Color.MAGENTA)
+        // --- CANLI VISUALIZER BAR ---
+        visualizerBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            progressDrawable.setTint(Color.parseColor("#FF0055")) // Sert mod rengi: Magenta
+            scaleY = 8f // Barı daha kalın ve görünür yaptık
+            setPadding(0, 50, 0, 80)
+        }
 
-        btn = Button(this).apply {
-            text = "START ENGINE"
-            setOnClickListener { 
+        mainBtn = Button(this).apply {
+            text = "INITIALIZE HARD MODE"
+            setPadding(0, 40, 0, 40)
+            setOnClickListener {
                 val intent = Intent(this@MainActivity, VibBoostService::class.java)
                 if (!VibBoostService.isRunning) {
                     startForegroundService(intent)
-                    text = "STOP ENGINE"
+                    text = "SHUTDOWN"
+                    setBackgroundColor(Color.RED)
                 } else {
                     stopService(intent)
-                    text = "START ENGINE"
+                    text = "INITIALIZE HARD MODE"
+                    setBackgroundColor(Color.DKGRAY)
+                    visualizerBar.progress = 0
+                    statusText.text = "ENGINE STANDBY"
                 }
             }
         }
 
-        root.addView(title)
-        root.addView(infoText)
-        root.addView(TextView(this).apply { text = "INPUT SIGNAL"; setTextColor(Color.GRAY) })
-        root.addView(inBar)
-        root.addView(TextView(this).apply { text = "HAPTIC OUTPUT"; setTextColor(Color.GRAY) })
-        root.addView(outBar)
-        root.addView(btn)
+        root.addView(statusText)
+        root.addView(visualizerBar)
+        root.addView(mainBtn)
         
         setContentView(root)
-        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.VIBRATE), 1)
-    }
-
-    private fun createBar(color: Int) = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-        max = 100
-        progress = 0
-        progressDrawable.setTint(color)
-        scaleY = 4f
-        setPadding(0, 40, 0, 60)
+        
+        // İzinleri alalım
+        ActivityCompat.requestPermissions(this, arrayOf(
+            Manifest.permission.RECORD_AUDIO, 
+            Manifest.permission.VIBRATE
+        ), 1)
     }
 
     override fun onResume() {
         super.onResume()
+        // Broadcast dinleyiciyi kaydet
         registerReceiver(receiver, IntentFilter(VibBoostService.UPDATE_ACTION), RECEIVER_EXPORTED)
     }
 
