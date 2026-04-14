@@ -1,13 +1,18 @@
 package com.alissgmr.vibboost
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -19,56 +24,145 @@ class MainActivity : AppCompatActivity() {
     private val PERMISSION_REQUEST_CODE = 2026
     private lateinit var statusText: TextView
     private lateinit var actionBtn: Button
+    
+    // Telemetri UI Bileşenleri
+    private lateinit var soundBar: ProgressBar
+    private lateinit var motorBar: ProgressBar
+    private lateinit var soundText: TextView
+    private lateinit var motorText: TextView
+
+    // Servisten gelen verileri dinleyen Receiver
+    private val telemetryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == VibBoostService.UPDATE_ACTION) {
+                val soundLvl = intent.getIntExtra("soundLevel", 0)
+                val motorLvl = intent.getIntExtra("motorPercent", 0)
+                
+                // UI Güncelleme
+                soundBar.progress = soundLvl
+                motorBar.progress = motorLvl
+                soundText.text = "BASS INPUT LEVEL: %${soundLvl}"
+                motorText.text = "HAPTIC MOTOR LOAD: %${motorLvl}"
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // UI Tasarımı (PC Versiyonu Esintili Dark Tema)
+        // Dinamik Arayüz Kurulumu (Canlı Telemetri Destekli)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(0xFF000000.toInt())
-            setPadding(80, 80, 80, 80)
+            setBackgroundColor(Color.parseColor("#050505")) // Tam Siyah (OLED)
+            setPadding(60, 60, 60, 60)
         }
 
         statusText = TextView(this).apply {
-            text = "VIB-BOOST PRO\nREADY FOR ENGAGEMENT"
-            setTextColor(0xFF00FFCC.toInt())
-            textSize = 22f
+            text = "VIB-BOOST DSP ENGINE\nOFFLINE"
+            setTextColor(Color.parseColor("#00FFCC"))
+            textSize = 24f
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 120)
+            setPadding(0, 0, 0, 80)
         }
 
+        // --- VISUALIZER BÖLÜMÜ ---
+        soundText = TextView(this).apply {
+            text = "BASS INPUT LEVEL: %0"
+            setTextColor(Color.parseColor("#AAAAAA"))
+            textSize = 14f
+            setPadding(0, 20, 0, 10)
+        }
+        soundBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            progressDrawable.setTint(Color.parseColor("#00FFCC"))
+            setPadding(0, 0, 0, 40)
+        }
+
+        motorText = TextView(this).apply {
+            text = "HAPTIC MOTOR LOAD: %0"
+            setTextColor(Color.parseColor("#AAAAAA"))
+            textSize = 14f
+            setPadding(0, 20, 0, 10)
+        }
+        motorBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            progressDrawable.setTint(Color.parseColor("#FF3366")) // Motor zorlanmasını kırmızımsı gösterelim
+            setPadding(0, 0, 0, 100)
+        }
+        // -------------------------
+
         actionBtn = Button(this).apply {
-            text = "START ENGINE"
-            setBackgroundColor(0xFF1A1A1A.toInt())
-            setTextColor(0xFFFFFFFF.toInt())
-            setPadding(40, 40, 40, 40)
-            setOnClickListener { handleServiceToggle() }
+            text = "INITIALIZE ENGINE"
+            setBackgroundColor(Color.parseColor("#1A1A1A"))
+            setTextColor(Color.WHITE)
+            setPadding(0, 40, 0, 40)
+            textSize = 18f
         }
 
         root.addView(statusText)
+        root.addView(soundText)
+        root.addView(soundBar)
+        root.addView(motorText)
+        root.addView(motorBar)
         root.addView(actionBtn)
-        setContentView(root)
 
+        setContentView(root)
         checkAndRequestPermissions()
+
+        actionBtn.setOnClickListener {
+            val intent = Intent(this, VibBoostService::class.java)
+            if (!VibBoostService.isRunning) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(intent)
+                } else {
+                    startService(intent)
+                }
+                statusText.text = "VIB-BOOST DSP ENGINE\nONLINE"
+                statusText.setTextColor(Color.parseColor("#00FFCC"))
+                actionBtn.text = "TERMINATE ENGINE"
+                actionBtn.setBackgroundColor(Color.parseColor("#440000"))
+            } else {
+                stopService(intent)
+                VibBoostService.isRunning = false
+                statusText.text = "VIB-BOOST DSP ENGINE\nOFFLINE"
+                statusText.setTextColor(Color.GRAY)
+                actionBtn.text = "INITIALIZE ENGINE"
+                actionBtn.setBackgroundColor(Color.parseColor("#1A1A1A"))
+                
+                // Sıfırla
+                soundBar.progress = 0
+                motorBar.progress = 0
+                soundText.text = "BASS INPUT LEVEL: %0"
+                motorText.text = "HAPTIC MOTOR LOAD: %0"
+            }
+        }
     }
 
-    private fun handleServiceToggle() {
-        val serviceIntent = Intent(this, VibBoostService::class.java)
-        
-        if (VibBoostService.isRunning) {
-            stopService(serviceIntent)
-            statusText.text = "ENGINE: OFFLINE"
-            actionBtn.text = "START ENGINE"
+    override fun onResume() {
+        super.onResume()
+        // Uygulama ekrandayken telemetri verilerini dinle
+        val filter = IntentFilter(VibBoostService.UPDATE_ACTION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(telemetryReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            // Android 8.0+ için Foreground Service başlatma kuralı
-            ContextCompat.startForegroundService(this, serviceIntent)
-            statusText.text = "ENGINE: ACTIVE (BACKGROUND)"
-            actionBtn.text = "STOP ENGINE"
-            // Uygulamayı arka plana at (Servis çalışmaya devam eder)
-            moveTaskToBack(true)
+            registerReceiver(telemetryReceiver, filter)
         }
+        
+        // UI durumunu servise göre senkronize et
+        if (VibBoostService.isRunning) {
+            statusText.text = "VIB-BOOST DSP ENGINE\nONLINE"
+            actionBtn.text = "TERMINATE ENGINE"
+            actionBtn.setBackgroundColor(Color.parseColor("#440000"))
+        }
+    }
+
+    override fun onPause() {
+        super.onResume()
+        // Uygulama arka plana atıldığında UI güncellemeyi durdur (Pil tasarrufu)
+        unregisterReceiver(telemetryReceiver)
     }
 
     private fun checkAndRequestPermissions() {
@@ -76,29 +170,14 @@ class MainActivity : AppCompatActivity() {
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.MODIFY_AUDIO_SETTINGS
         )
-        
-        // Android 13+ için bildirim izni (Arka plan servisi için şart)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
-
         val missingPermissions = permissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-
         if (missingPermissions.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, missingPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
-        }
-    }
-
-    override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, gr: IntArray) {
-        super.onRequestPermissionsResult(rc, p, gr)
-        if (rc == PERMISSION_REQUEST_CODE) {
-            if (gr.isNotEmpty() && gr[0] == PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "Permissions Secured. Engine Ready.", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this, "Critical Permissions Denied!", Toast.LENGTH_LONG).show()
-            }
         }
     }
 }
