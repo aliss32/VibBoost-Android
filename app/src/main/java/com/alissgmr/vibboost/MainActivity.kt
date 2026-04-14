@@ -3,6 +3,7 @@ package com.alissgmr.vibboost
 import android.Manifest
 import android.content.Intent
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
@@ -22,16 +23,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         val actionBtn = Button(this).apply {
-            text = if (VibBoostService.isRunning) "STOP ENGINE" else "START LINEAR ENGINE"
+            text = if (VibBoostService.isRunning) "STOP ENGINE" else "START BASS ENGINE"
             setPadding(80, 40, 80, 40)
             setOnClickListener {
                 val intent = Intent(this@MainActivity, VibBoostService::class.java)
                 if (!VibBoostService.isRunning) {
-                    startForegroundService(intent)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(intent)
+                    } else {
+                        startService(intent)
+                    }
                     text = "STOP ENGINE"
                 } else {
                     stopService(intent)
-                    text = "START LINEAR ENGINE"
+                    text = "START BASS ENGINE"
                 }
             }
         }
@@ -39,10 +44,15 @@ class MainActivity : AppCompatActivity() {
         root.addView(actionBtn)
         setContentView(root)
         
-        // Gerekli izinleri iste
-        ActivityCompat.requestPermissions(this, arrayOf(
+        // Android 13+ (API 33+) için Bildirim İzni dahil edildi
+        val permissions = mutableListOf(
             Manifest.permission.RECORD_AUDIO, 
             Manifest.permission.VIBRATE
-        ), 1)
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        
+        ActivityCompat.requestPermissions(this, permissions.toTypedArray(), 1)
     }
 }
