@@ -1,185 +1,277 @@
+// MainActivity.kt
 package com.alissgmr.vibboost
 
 import android.Manifest
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.os.*
-import android.view.Choreographer
+import android.os.Build
+import android.os.Bundle
 import android.view.Gravity
+import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var root: LinearLayout
     private lateinit var actionBtn: Button
-    private lateinit var rootLayout: LinearLayout
+    private lateinit var freqLabel: TextView
+    private lateinit var freqSeekBar: SeekBar
+    private lateinit var shakeSpinner: Spinner
+    private lateinit var themeSpinner: Spinner
+    private lateinit var statusLabel: TextView
     
-    // Frekans Arayüz Değişkenleri
-    private lateinit var thresholdLabel: TextView
-    private lateinit var thresholdSeekBar: SeekBar
-
-    // Görsel Efekt Değişkenleri
-    private var currentHue = 0f
-    private var targetIntensity = 0
-    private var targetDuration = 0L
-    private var currentDisplayIntensity = 0f
-    private val smoothingFactor = 0.15f // 120Hz için akıcı ease-out
+    private var lastIntensity = 0f
+    private val easeInterpolator = DecelerateInterpolator()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setupUI()
-        attachListener() // Servis verilerini dinlemeye başla
-        startAnimationLoop() 
-    }
 
-    private fun setupUI() {
-        rootLayout = LinearLayout(this).apply {
+        // Root Layout
+        root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.BLACK) // AMOLED Black
+            setPadding(40, 40, 40, 40)
         }
 
-        // --- BASS FREKANSI SEÇİCİ (SeekBar) ---
-        thresholdLabel = TextView(this).apply {
-            text = "Hedef Bass Frekansı: ${VibBoostService.targetFrequency.toInt()} Hz"
-            setTextColor(Color.WHITE)
+        // Status/Visual Area
+        statusLabel = TextView(this).apply {
+            text = "VibBoost Pro"
+            textSize = 24f
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 20)
+            setPadding(0, 0, 0, 50)
         }
+        root.addView(statusLabel)
 
-        thresholdSeekBar = SeekBar(this).apply {
-            max = 210 // 40 Hz ile 250 Hz arası
-            progress = VibBoostService.targetFrequency.toInt() - 40
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    val freq = progress + 40f
-                    VibBoostService.targetFrequency = freq
-                    thresholdLabel.text = "Hedef Bass Frekansı: ${freq.toInt()} Hz"
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-            })
-            setPadding(0, 0, 0, 60)
-        }
-
-        // --- TEMA SEÇİCİ ---
-        val themeBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(0, 40, 0, 0)
-        }
-        
-        val colors = mapOf("AMOLED" to "#000000", "WHITE" to "#FFFFFF", "OCEAN" to "#001F3F", "DEEP" to "#1A1A1A")
-        colors.forEach { (name, hex) ->
-            themeBar.addView(Button(this).apply {
-                text = name
-                textSize = 10f
-                setOnClickListener { 
-                    rootLayout.setBackgroundColor(Color.parseColor(hex))
-                    // Beyaz temaya geçilirse frekans yazısını siyah yap ki okunsun
-                    thresholdLabel.setTextColor(if(hex == "#FFFFFF") Color.BLACK else Color.WHITE)
-                }
-            })
-        }
-
-        // --- ANA BUTON ---
+        // Main Action Button
         actionBtn = Button(this).apply {
-            val size = (resources.displayMetrics.density * 260).toInt()
-            layoutParams = LinearLayout.LayoutParams(size, size)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#333333"))
-            }
-            text = if (VibBoostService.isRunning) "ENGINE ACTIVE" else "START ENGINE"
-            setTextColor(Color.WHITE)
-            setOnClickListener { toggleService() }
-        }
-
-        // Bileşenleri ekrana ekle
-        rootLayout.addView(thresholdLabel)
-        rootLayout.addView(thresholdSeekBar)
-        rootLayout.addView(actionBtn)
-        rootLayout.addView(themeBar)
-        
-        setContentView(rootLayout)
-        
-        // İzinleri iste
-        val permissions = mutableListOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.VIBRATE)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        ActivityCompat.requestPermissions(this, permissions.toTypedArray(), 1)
-    }
-
-    private fun attachListener() {
-        VibBoostService.hapticListener = { intensity, duration ->
-            targetIntensity = intensity
-            targetDuration = duration
-        }
-    }
-
-    private fun toggleService() {
-        val intent = Intent(this, VibBoostService::class.java)
-        if (!VibBoostService.isRunning) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
-            attachListener()
-            actionBtn.text = "ENGINE ACTIVE"
-        } else {
-            stopService(intent)
-            targetIntensity = 0
-            currentDisplayIntensity = 0f
-            actionBtn.text = "START ENGINE"
-            actionBtn.translationX = 0f
-            actionBtn.translationY = 0f
-            (actionBtn.background as GradientDrawable).setColor(Color.parseColor("#333333"))
-        }
-    }
-
-    // 120Hz Akıcı Animasyon Döngüsü
-    private fun startAnimationLoop() {
-        Choreographer.getInstance().postFrameCallback(object : Choreographer.FrameCallback {
-            override fun doFrame(frameTimeNanos: Long) {
-                if (VibBoostService.isRunning || currentDisplayIntensity > 0.1f) {
-                    updateVisuals()
+            text = if (VibBoostService.isRunning) "STOP ENGINE" else "START BASS ENGINE"
+            setPadding(80, 40, 80, 40)
+            setOnClickListener {
+                val intent = Intent(this@MainActivity, VibBoostService::class.java)
+                if (!VibBoostService.isRunning) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(intent)
+                    } else {
+                        startService(intent)
+                    }
+                    text = "STOP ENGINE"
+                } else {
+                    stopService(intent)
+                    text = "START BASS ENGINE"
                 }
-                Choreographer.getInstance().postFrameCallback(this)
             }
-        })
+        }
+        root.addView(actionBtn)
+
+        // Spacer
+        root.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(0, 0, 1f) })
+
+        // Selection Menus Container (Bottom)
+        val menuContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            weightSum = 2f
+            setPadding(0, 0, 0, 40)
+        }
+
+        // Shake Mode Spinner
+        val shakeOptions = arrayOf("Doğrusal (Varsayılan)", "Ease Out")
+        shakeSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, shakeOptions)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p0: AdapterView<*>?, p1: View?, pos: Int, p3: Long) {
+                    VibBoostService.shakeMode = pos 
+                }
+                override fun onNothingSelected(p0: AdapterView<*>?) {}
+            }
+        }
+
+        // Theme Spinner
+        val themeOptions = arrayOf("Karanlık Tema", "Beyaz Tema")
+        themeSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, themeOptions)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p0: AdapterView<*>?, p1: View?, pos: Int, p3: Long) {
+                    applyTheme(pos == 1)
+                }
+                override fun onNothingSelected(p0: AdapterView<*>?) {}
+            }
+        }
+
+        menuContainer.addView(shakeSpinner)
+        menuContainer.addView(themeSpinner)
+        root.addView(menuContainer)
+
+        // Hz Label
+        freqLabel = TextView(this).apply {
+            text = "Hedef Bass Frekansı: ${VibBoostService.targetFrequency.toInt()} Hz"
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 10)
+        }
+        root.addView(freqLabel)
+
+        // Hz SeekBar (At the very bottom with side margins)
+        freqSeekBar = SeekBar(this).apply {
+            max = 210 // 40 to 250
+            progress = VibBoostService.targetFrequency.toInt() - 40
+            setPadding(60, 30, 60, 30) // Horizontal margins
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                    val freq = p + 40f
+                    VibBoostService.targetFrequency = freq
+                    freqLabel.text = "Hedef Bass Frekansı: ${freq.toInt()} Hz"
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {}
+            })
+        }
+        root.addView(freqSeekBar)
+
+        setContentView(root)
+        applyTheme(false) // Default Dark
+
+        // Visualizer Listener
+        VibBoostService.hapticListener = { intensity, _ ->
+            runOnUiThread {
+                val targetScale = 1.0f + (intensity / 255f) * 0.5f
+                if (VibBoostService.shakeMode == 1) { // Ease Out
+                    actionBtn.animate()
+                        .scaleX(targetScale)
+                        .scaleY(targetScale)
+                        .setDuration(100)
+                        .setInterpolator(easeInterpolator)
+                        .start()
+                } else { // Linear
+                    actionBtn.scaleX = targetScale
+                    actionBtn.scaleY = targetScale
+                }
+            }
+        }
+
+        ActivityCompat.requestPermissions(this, arrayOf(
+            Manifest.permission.RECORD_AUDIO, 
+            Manifest.permission.VIBRATE,
+            Manifest.permission.POST_NOTIFICATIONS
+        ), 1)
     }
 
-    private fun updateVisuals() {
-        // Ease-out interpolasyon
-        currentDisplayIntensity += (targetIntensity - currentDisplayIntensity) * smoothingFactor
+    private fun applyTheme(isWhite: Boolean) {
+        val bgColor = if (isWhite) Color.WHITE else Color.parseColor("#121212")
+        val textColor = if (isWhite) Color.BLACK else Color.WHITE
+        
+        root.setBackgroundColor(bgColor)
+        statusLabel.setTextColor(textColor)
+        freqLabel.setTextColor(textColor)
+        
+        // Button style adjustment
+        actionBtn.setTextColor(if (isWhite) Color.WHITE else Color.WHITE)
+        val btnBg = GradientDrawable().apply {
+            cornerRadius = 20f
+            setColor(if (isWhite) Color.parseColor("#333333") else Color.parseColor("#BB86FC"))
+        }
+        actionBtn.background = btnBg
+    }
+}
 
-        if (currentDisplayIntensity > 2) {
-            // Shake efekti (Akıcı)
-            val shake = (currentDisplayIntensity / 255f) * 40f
-            actionBtn.translationX = ((Math.random() - 0.5) * 2 * shake).toFloat()
-            actionBtn.translationY = ((Math.random() - 0.5) * 2 * shake).toFloat()
-            
-            // Rainbow efekti
-            currentHue = (currentHue + (currentDisplayIntensity / 40f)) % 360f
-            val color = Color.HSVToColor(floatArrayOf(currentHue, 0.8f, 1.0f))
-            (actionBtn.background as GradientDrawable).setColor(color)
-            
-            actionBtn.text = "PWR: ${targetIntensity}\nTIME: ${targetDuration}ms"
-        } else {
-            if (VibBoostService.isRunning) {
-                actionBtn.text = "LISTENING..."
-                actionBtn.translationX = 0f
-                actionBtn.translationY = 0f
+// VibBoostService.kt
+package com.alissgmr.vibboost
+
+import android.app.*
+import android.content.Intent
+import android.media.audiofx.Visualizer
+import android.os.*
+import androidx.core.app.NotificationCompat
+import kotlin.math.hypot
+
+class VibBoostService : Service() {
+
+    companion object {
+        var isRunning = false
+        var hapticListener: ((intensity: Int, duration: Long) -> Unit)? = null
+        var targetFrequency = 80f
+        var shakeMode = 0 // 0: Linear, 1: Ease Out
+        const val ACTION_STOP = "com.alissgmr.vibboost.STOP"
+    }
+
+    private var visualizer: Visualizer? = null
+    private var vibrator: Vibrator? = null
+    private val BASS_CEILING = 180f
+    private var lastVibTime = 0L
+
+    override fun onBind(intent: Intent?) = null
+
+    override fun onCreate() {
+        super.onCreate()
+        vibrator = getSystemService(Vibrator::class.java)
+        createNotificationChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        val notification = NotificationCompat.Builder(this, "VibBoostChannel")
+            .setContentTitle("VibBoost Aktif")
+            .setContentText("Motor Çalışıyor...")
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .build()
+
+        startForeground(1, notification)
+        isRunning = true
+        startEngine()
+        return START_STICKY
+    }
+
+    private fun startEngine() {
+        try {
+            visualizer = Visualizer(0).apply {
+                captureSize = Visualizer.getCaptureSizeRange()[1]
+                setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
+                    override fun onWaveform(v: Visualizer?, w: ByteArray?, r: Int) {}
+                    override fun onFft(v: Visualizer?, fft: ByteArray?, r: Int) {
+                        if (fft == null) return
+                        
+                        val index = (targetFrequency / (r / 2000f)).toInt().coerceIn(0, fft.size / 2 - 1)
+                        val magnitude = hypot(fft[index * 2].toDouble(), fft[index * 2 + 1].toDouble()).toFloat()
+                        
+                        if (magnitude > 30f) {
+                            val intensity = ((magnitude / BASS_CEILING) * 255).toInt().coerceIn(0, 255)
+                            val duration = 120L
+                            
+                            val now = System.currentTimeMillis()
+                            if (now - lastVibTime > 80) {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    vibrator?.vibrate(VibrationEffect.createOneShot(duration, intensity))
+                                }
+                                lastVibTime = now
+                                hapticListener?.invoke(intensity, duration)
+                            }
+                        }
+                    }
+                }, Visualizer.getMaxCaptureRate() / 2, false, true)
+                enabled = true
             }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val chan = NotificationChannel("VibBoostChannel", "VibBoost Engine", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(chan)
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        attachListener()
+    override fun onDestroy() {
+        isRunning = false
+        visualizer?.release()
+        vibrator?.cancel()
+        super.onDestroy()
     }
 }
