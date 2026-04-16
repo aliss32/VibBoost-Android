@@ -14,17 +14,16 @@ class VibBoostService : Service() {
 
     companion object { 
         var isRunning = false 
-        var hapticListener: ((intensity: Int, duration: Long) -> Unit)? = null
+        // Listener'a Hz parametresi eklendi
+        var hapticListener: ((intensity: Int, duration: Long, hz: Int) -> Unit)? = null
         const val ACTION_STOP = "com.alissgmr.vibboost.STOP"
         
-        // Artık hedef frekans değil, "Gate" (Eşik) yüzdesi tutuyoruz (0 ile 100 arası)
         var gateThresholdPercent = 30f 
     }
 
     private var visualizer: Visualizer? = null
     private var vibrator: Vibrator? = null
     
-    // Ses şiddetinin maksimum varsayılan tavanı
     private val BASS_CEILING = 150f    
 
     private var lastVibTime = 0L
@@ -40,6 +39,7 @@ class VibBoostService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // ... (Bu kısımdaki Notification kodları senin orjinal kodunla aynı kalabilir)
         if (intent?.action == ACTION_STOP) {
             stopSelf()
             return START_NOT_STICKY
@@ -87,54 +87,46 @@ class VibBoostService : Service() {
                     override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, samplingRate: Int) {
                         if (fft == null || v == null) return
 
-                        // FFT index hesaplamaları (Her bin ~43Hz)
-                        // index = bin * 2 (Real), index = bin * 2 + 1 (Imaginary)
-                        
-                        // 1. SUB-BASS (0-43 Hz) -> Bin 1
-                        val subBassMag = hypot(fft[2].toFloat(), fft[3].toFloat())
-                        
-                        // 2. PUNCH-BASS (43-86 Hz) -> Bin 2
-                        val punchBassMag = hypot(fft[4].toFloat(), fft[5].toFloat())
-                        
-                        // 3. MID-BASS (86-215 Hz) -> Bin 3, 4, 5 (En yükseğini al)
-                        var midBassMag = 0f
-                        for (i in 3..5) {
+                        var maxMag = 0f
+                        var dominantBin = 0
+
+                        // Sadece Bass frekanslarını (Bin 1 ile 5 arası, yani ~43Hz ile ~215Hz arası) tara
+                        for (i in 1..5) {
                             val mag = hypot(fft[i * 2].toFloat(), fft[i * 2 + 1].toFloat())
-                            if (mag > midBassMag) midBassMag = mag
+                            if (mag > maxMag) {
+                                maxMag = mag
+                                dominantBin = i
+                            }
                         }
 
-                        // Hangi frekans baskınsa onu seçiyoruz
-                        var dominantMag = 0f
                         var targetIntensity = 0
                         var targetDuration = 0L
+                        val dominantHz = dominantBin * 43 // Dinamik Hz hesaplaması
 
-                        if (subBassMag > punchBassMag && subBassMag > midBassMag) {
-                            dominantMag = subBassMag
-                            // Sub-Bass Karakteri: %100 Güç (255), Uzun süre
-                            targetIntensity = ((subBassMag / BASS_CEILING) * 255).toInt().coerceIn(0, 255)
-                            targetDuration = ((subBassMag / BASS_CEILING) * 120L).toLong().coerceIn(60L, 120L)
-                        } 
-                        else if (punchBassMag > subBassMag && punchBassMag > midBassMag) {
-                            dominantMag = punchBassMag
-                            // Punch-Bass Karakteri: %80 Güç (Max ~204), Kısa sert vuruş
-                            targetIntensity = ((punchBassMag / BASS_CEILING) * 204).toInt().coerceIn(0, 204)
-                            targetDuration = ((punchBassMag / BASS_CEILING) * 50L).toLong().coerceIn(30L, 50L)
-                        } 
-                        else {
-                            dominantMag = midBassMag
-                            // Mid-Bass Karakteri: %50 Güç (Max ~127), Çok kısa pürüzsüz vuruş
-                            targetIntensity = ((midBassMag / BASS_CEILING) * 127).toInt().coerceIn(0, 127)
+                        if (dominantBin == 1) {
+                            // Sub-Bass Karakteri (0-43 Hz)
+                            targetIntensity = ((maxMag / BASS_CEILING) * 255).toInt().coerceIn(0, 255)
+                            targetDuration = ((maxMag / BASS_CEILING) * 120L).toLong().coerceIn(60L, 120L)
+                        } else if (dominantBin == 2) {
+                            // Punch-Bass Karakteri (43-86 Hz)
+                            targetIntensity = ((maxMag / BASS_CEILING) * 204).toInt().coerceIn(0, 204)
+                            targetDuration = ((maxMag / BASS_CEILING) * 50L).toLong().coerceIn(30L, 50L)
+                        } else if (dominantBin in 3..5) {
+                            // Mid-Bass Karakteri (86-215 Hz)
+                            targetIntensity = ((maxMag / BASS_CEILING) * 127).toInt().coerceIn(0, 127)
                             targetDuration = 20L // Sabit kısa
                         }
 
-                        // GATE (EŞİK) KONTROLÜ
-                        // Kullanıcının seçtiği yüzdeye göre minimum şiddet eşiği hesaplanıyor
+                        // KULLANICI EŞİĞİ (GATE)
                         val activeGate = (gateThresholdPercent / 100f) * BASS_CEILING
                         
-                        if (dominantMag < activeGate || dominantMag < 10f) { // 10f dip gürültüsü
-                            // Gate'i geçemedi, titreşimi iptal et
+                        // --- TIKTIK (PHANTOM VIBRATION) ÇÖZÜMÜ ---
+                        // 1. maxMag kullanıcının belirlediği Gate'i geçmeli
+                        // 2. maxMag minimum 35f olmalı (Donanımsal dip gürültüleri tamamen yok eder)
+                        // 3. Hesaplanan güç (targetIntensity) en az 40 olmalı (Çok zayıf "tık"lama titreşimlerini iptal eder)
+                        if (maxMag < activeGate || maxMag < 35f || targetIntensity < 40) {
                             currentAmplitude = 0
-                            hapticListener?.invoke(0, 0L)
+                            hapticListener?.invoke(0, 0L, 0)
                             return
                         }
 
@@ -149,7 +141,8 @@ class VibBoostService : Service() {
                             }
                         }
                         
-                        hapticListener?.invoke(targetIntensity, targetDuration)
+                        // Hz bilgisini de UI'a gönder
+                        hapticListener?.invoke(targetIntensity, targetDuration, dominantHz)
                     }
                 }, Visualizer.getMaxCaptureRate() / 2, false, true)
                 enabled = true
