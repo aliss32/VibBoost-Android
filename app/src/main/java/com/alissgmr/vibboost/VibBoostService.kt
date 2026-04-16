@@ -9,6 +9,7 @@ import android.os.*
 import androidx.core.app.NotificationCompat
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min // Bunu eklememiz gerekiyor
 
 class VibBoostService : Service() {
 
@@ -16,7 +17,7 @@ class VibBoostService : Service() {
         var isRunning = false 
         var hapticListener: ((intensity: Int, duration: Long) -> Unit)? = null
         const val ACTION_STOP = "com.alissgmr.vibboost.STOP"
-        var noiseGateThreshold = 25f // UI üzerinden kontrol edilecek dinamik eşik değeri
+        var targetFrequency = 80f // UI üzerinden kontrol edilecek hedef frekans (Başlangıç 80 Hz)
     }
 
     private var visualizer: Visualizer? = null
@@ -74,25 +75,49 @@ class VibBoostService : Service() {
     private fun initializeRawEngine() {
         try {
             visualizer = Visualizer(0).apply {
-                captureSize = 256
+                // Frekans çözünürlüğünü artırmak için en yüksek capture size'ı alıyoruz (Genelde 1024)
+                val maxCaptureSize = Visualizer.getCaptureSizeRange()[1]
+                captureSize = maxCaptureSize 
+
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, s: Int) {}
-                    override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, s: Int) {
-                        if (fft == null) return
-                        val rawBass = max(hypot(fft[2].toFloat(), fft[3].toFloat()), hypot(fft[4].toFloat(), fft[5].toFloat()))
+                    
+                    override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, samplingRate: Int) {
+                        if (fft == null || v == null) return
+
+                        // samplingRate mHz (miliHertz) gelir, Hz'e çeviriyoruz
+                        val sampleRateHz = samplingRate / 1000f
+                        // Her bir FFT sepetinin (bin) kaç Hz aralığına denk geldiğini buluyoruz
+                        val binSize = sampleRateHz / maxCaptureSize
+
+                        // UI'dan seçilen frekansa en yakın olan sepetin indeksini buluyoruz
+                        val targetBin = (targetFrequency / binSize).toInt().coerceIn(1, (maxCaptureSize / 2) - 1)
+
+                        // Sesi daha iyi yakalamak için tam o frekansa ve yanındaki ±1 frekans bandına bakıyoruz
+                        var targetMagnitude = 0f
+                        val startBin = max(1, targetBin - 1)
+                        val endBin = min((maxCaptureSize / 2) - 1, targetBin + 1)
+
+                        for (i in startBin..endBin) {
+                            val real = fft[i * 2].toFloat()
+                            val imaginary = fft[i * 2 + 1].toFloat()
+                            val magnitude = hypot(real, imaginary)
+                            if (magnitude > targetMagnitude) {
+                                targetMagnitude = magnitude
+                            }
+                        }
                         
-                        // Sabit NOISE_GATE yerine, arayüzden ayarlanan dinamik değeri kullanıyoruz
-                        if (rawBass < noiseGateThreshold) {
+                        // Sabit ufak bir ses şiddeti filtresi (Ortam gürültüsünde titrememesi için)
+                        val BASE_NOISE_GATE = 35f 
+                        if (targetMagnitude < BASE_NOISE_GATE) {
                             vibrator?.cancel() 
                             hapticListener?.invoke(0, 0L)
                             return
                         }
 
-                        // Titreşim Gücü (0 - 255 | %0 - %100)
-                        val finalIntensity = ((rawBass / BASS_CEILING) * 255).toInt().coerceIn(0, 255)
-                        
-                        // Titreşim Süresi (Anlık bass şiddetine göre 20ms - 1000ms arası)
-                        val dynamicDuration = ((rawBass / BASS_CEILING) * 1000L).toLong().coerceIn(20L, 1000L)
+                        // Sadece o frekanstaki şiddete göre titreşim gücünü hesapla
+                        val finalIntensity = ((targetMagnitude / BASS_CEILING) * 255).toInt().coerceIn(0, 255)
+                        val dynamicDuration = ((targetMagnitude / BASS_CEILING) * 1000L).toLong().coerceIn(20L, 1000L)
 
                         val now = System.currentTimeMillis()
                         if (now - lastVibTime >= currentDuration || finalIntensity > currentAmplitude + 20) {
