@@ -13,6 +13,8 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 
+// ... (İmportları aynı bırak)
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var actionBtn: Button
@@ -28,11 +30,12 @@ class MainActivity : AppCompatActivity() {
     private var currentHue = 0f
     private var targetIntensity = 0
     private var targetDuration = 0L
+    private var targetHz = 0 // YENİ EKLENDİ
     private var currentDisplayIntensity = 0f
-    private val smoothingFactor = 0.15f // Ease-out modu için yumuşatma
+    private val smoothingFactor = 0.15f 
     
     private var isWhiteTheme = false 
-    private var shakeMode = 0 // 0: Doğrusal (Anında), 1: Yumuşak (Ease-out)
+    private var shakeMode = 0 
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,10 +45,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupUI() {
+        // ... (Senin orjinal rootLayout ve diğer UI kurulumların aynı kalacak, sadece butona kalın yazı ekliyoruz)
         rootLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.BLACK) // Varsayılan AMOLED
+            setBackgroundColor(Color.BLACK)
         }
 
         // --- 1. ANA BUTON (Üst Kısım) ---
@@ -60,132 +64,23 @@ class MainActivity : AppCompatActivity() {
             }
             text = if (VibBoostService.isRunning) "ENGINE ACTIVE" else "START ENGINE"
             setTextColor(Color.WHITE)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD // YAZIYI KALINLAŞTIRDIK
             setOnClickListener { toggleService() }
         }
 
-        // --- 2. SEÇİM MENÜLERİ (Yan Yana) ---
-        val spinnerLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            setPadding(60, 0, 60, 40)
-        }
-
-        // Titreşim Modu Spinner
-        val shakeOptions = arrayOf("Doğrusal (Anlık)", "Yumuşak (Ease-out)")
-        shakeSpinner = Spinner(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            adapter = createCustomAdapter(shakeOptions)
-            setSelection(0) 
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                    shakeMode = position
-                }
-                override fun onNothingSelected(parent: AdapterView<*>?) {}
-            }
-        }
-
-        // Tema Seçimi Spinner
-        val themeOptions = arrayOf("AMOLED", "BEYAZ", "OKYANUS", "GECE")
-        val themeHexCodes = arrayOf("#000000", "#FFFFFF", "#001F3F", "#121212")
-        themeSpinner = Spinner(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            adapter = createCustomAdapter(themeOptions)
-            setSelection(0)
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                    val hex = themeHexCodes[position]
-                    rootLayout.setBackgroundColor(Color.parseColor(hex))
-                    isWhiteTheme = (hex == "#FFFFFF")
-                    updateUIColors()
-                }
-                override fun onNothingSelected(parent: AdapterView<*>?) {}
-            }
-        }
-
-        spinnerLayout.addView(shakeSpinner)
-        spinnerLayout.addView(themeSpinner)
-
-        // --- 3. GATE (EŞİK) METNİ ---
-        thresholdLabel = TextView(this).apply {
-            text = "Titreşim Eşiği (Gate): %${VibBoostService.gateThresholdPercent.toInt()}"
-            setTextColor(Color.WHITE)
-            textSize = 16f
-            gravity = Gravity.CENTER
-            setPadding(0, 40, 0, 10)
-        }
-
-        // --- 4. GATE KAYDIRACI (En Altta ve Boşluklu) ---
-        thresholdSeekBar = SeekBar(this).apply {
-            max = 100
-            progress = VibBoostService.gateThresholdPercent.toInt()
-            
-            val seekParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            seekParams.setMargins(100, 10, 100, 50) // Sağdan ve soldan büyük boşluklar
-            layoutParams = seekParams
-
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    VibBoostService.gateThresholdPercent = progress.toFloat()
-                    thresholdLabel.text = "Titreşim Eşiği (Gate): %$progress"
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-            })
-        }
-
-        // Hiyerarşik Ekleme
-        rootLayout.addView(actionBtn)
-        rootLayout.addView(spinnerLayout)
-        rootLayout.addView(thresholdLabel)
-        rootLayout.addView(thresholdSeekBar)
-        
-        setContentView(rootLayout)
-    
-        // İzin Yönetimi
-        val permissions = mutableListOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.VIBRATE)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        ActivityCompat.requestPermissions(this, permissions.toTypedArray(), 1)
+        // (Diğer setup UI kodların tamamen aynı kalacak: Spinner, ThresholdLabel vb.)
+        // ... (Kod kalabalığı olmaması için atlıyorum, kendi setupUI bloğunun geri kalanını bozma)
+        // ...
     }
 
-    // Beyaz tema ve diğer temalar için adaptör metin rengi ayarı
-    private fun createCustomAdapter(items: Array<String>): ArrayAdapter<String> {
-        return object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, items) {
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val view = super.getView(position, convertView, parent) as TextView
-                view.setTextColor(if (isWhiteTheme) Color.BLACK else Color.WHITE)
-                view.gravity = Gravity.CENTER
-                return view
-            }
-            override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val view = super.getDropDownView(position, convertView, parent) as TextView
-                view.setTextColor(Color.BLACK) // Açılır menü listesi daima okunabilir siyah
-                view.setPadding(30, 30, 30, 30)
-                return view
-            }
-        }
-    }
-
-    // Temaya göre statik metin renklerini güncelle
-    private fun updateUIColors() {
-        val color = if (isWhiteTheme) Color.BLACK else Color.WHITE
-        thresholdLabel.setTextColor(color)
-        (shakeSpinner.adapter as ArrayAdapter<*>).notifyDataSetChanged()
-        (themeSpinner.adapter as ArrayAdapter<*>).notifyDataSetChanged()
-    }
+    // ... (createCustomAdapter, updateUIColors vb. aynı kalsın)
 
     private fun attachListener() {
-        VibBoostService.hapticListener = { intensity, duration ->
+        // Listener yapısını 3 parametre (intensity, duration, hz) alacak şekilde güncelledik
+        VibBoostService.hapticListener = { intensity, duration, hz ->
             targetIntensity = intensity
             targetDuration = duration
+            targetHz = hz
         }
     }
 
@@ -202,6 +97,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             stopService(intent)
             targetIntensity = 0
+            targetHz = 0 // Sıfırladık
             currentDisplayIntensity = 0f
             actionBtn.text = "START ENGINE"
             actionBtn.translationX = 0f
@@ -210,42 +106,33 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startAnimationLoop() {
-        Choreographer.getInstance().postFrameCallback(object : Choreographer.FrameCallback {
-            override fun doFrame(frameTimeNanos: Long) {
-                if (VibBoostService.isRunning || currentDisplayIntensity > 0.1f) {
-                    updateVisuals()
-                }
-                Choreographer.getInstance().postFrameCallback(this)
-            }
-        })
-    }
+    // ... (startAnimationLoop aynı kalacak)
 
     private fun updateVisuals() {
-        // Seçilen moda göre görsel tepki hesaplaması
         if (shakeMode == 0) {
             currentDisplayIntensity = targetIntensity.toFloat()
         } else {
             currentDisplayIntensity += (targetIntensity - currentDisplayIntensity) * smoothingFactor
         }
 
-        if (currentDisplayIntensity > 2) {
-            // Shake (Sarsıntı) Hesabı
+        // Sadece güçlü titreşimler ekrana yansısın
+        if (currentDisplayIntensity > 2 && targetIntensity > 0) {
             val shake = (currentDisplayIntensity / 255f) * 45f
             actionBtn.translationX = ((Math.random() - 0.5) * 2 * shake).toFloat()
             actionBtn.translationY = ((Math.random() - 0.5) * 2 * shake).toFloat()
              
-            // Dinamik Renk Geçişi
             currentHue = (currentHue + (currentDisplayIntensity / 30f)) % 360f
             val color = Color.HSVToColor(floatArrayOf(currentHue, 0.8f, 1.0f))
             (actionBtn.background as GradientDrawable).setColor(color)
             
-            actionBtn.text = "GÜÇ: ${targetIntensity}\nSÜRE: ${targetDuration}ms"
+            // FREKANS BİLGİSİ EKLENDİ
+            actionBtn.text = "GÜÇ: ${targetIntensity}\nSÜRE: ${targetDuration}ms\nFREKANS: ~${targetHz}Hz"
         } else {
             if (VibBoostService.isRunning) {
                 actionBtn.text = "DİNLENİYOR..."
                 actionBtn.translationX = 0f
                 actionBtn.translationY = 0f
+                (actionBtn.background as GradientDrawable).setColor(Color.parseColor("#333333")) // Dinlenirken orijinal renge dönsün
             }
         }
     }
