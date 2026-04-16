@@ -16,11 +16,11 @@ class VibBoostService : Service() {
         var isRunning = false 
         var hapticListener: ((intensity: Int, duration: Long) -> Unit)? = null
         const val ACTION_STOP = "com.alissgmr.vibboost.STOP"
+        var noiseGateThreshold = 25f // UI üzerinden kontrol edilecek dinamik eşik değeri
     }
 
     private var visualizer: Visualizer? = null
     private var vibrator: Vibrator? = null
-    private val NOISE_GATE = 25f
     private val BASS_CEILING = 180f    
 
     private var lastVibTime = 0L
@@ -74,15 +74,16 @@ class VibBoostService : Service() {
     private fun initializeRawEngine() {
         try {
             visualizer = Visualizer(0).apply {
-                captureSize = 256 // Tepkime süresini (latency) düşürmek için daraltıldı
+                captureSize = 256
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, s: Int) {}
                     override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, s: Int) {
                         if (fft == null) return
                         val rawBass = max(hypot(fft[2].toFloat(), fft[3].toFloat()), hypot(fft[4].toFloat(), fft[5].toFloat()))
                         
-                        if (rawBass < NOISE_GATE) {
-                            vibrator?.cancel() // Bass kesildiği an titreşimi de kesin olarak keser
+                        // Sabit NOISE_GATE yerine, arayüzden ayarlanan dinamik değeri kullanıyoruz
+                        if (rawBass < noiseGateThreshold) {
+                            vibrator?.cancel() 
                             hapticListener?.invoke(0, 0L)
                             return
                         }
