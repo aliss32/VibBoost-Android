@@ -1,6 +1,7 @@
 package com.alissgmr.vibboost
 
 import android.app.*
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.audiofx.Visualizer
@@ -13,8 +14,8 @@ class VibBoostService : Service() {
 
     companion object { 
         var isRunning = false 
-        // Veri gönderen ana mekanizma
         var hapticListener: ((intensity: Int, duration: Long) -> Unit)? = null
+        const val ACTION_STOP = "com.alissgmr.vibboost.STOP"
     }
 
     private var visualizer: Visualizer? = null
@@ -35,10 +36,25 @@ class VibBoostService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            this.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingOpenIntent = PendingIntent.getActivity(this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val stopIntent = Intent(this, VibBoostService::class.java).apply { action = ACTION_STOP }
+        val pendingStopIntent = PendingIntent.getService(this, 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
         val notification = NotificationCompat.Builder(this, "VibBoostChannel")
             .setContentTitle("VibBoost Pro")
-            .setContentText("Motor Hazır")
+            .setContentText("Motor Hazır ve Dinliyor")
             .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentIntent(pendingOpenIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "DURDUR", pendingStopIntent)
             .setOngoing(true)
             .build()
         
@@ -58,31 +74,26 @@ class VibBoostService : Service() {
     private fun initializeRawEngine() {
         try {
             visualizer = Visualizer(0).apply {
-                captureSize = Visualizer.getCaptureSizeRange()[1]
+                captureSize = 256 // Tepkime süresini (latency) düşürmek için daraltıldı
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, s: Int) {}
                     override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, s: Int) {
                         if (fft == null) return
                         val rawBass = max(hypot(fft[2].toFloat(), fft[3].toFloat()), hypot(fft[4].toFloat(), fft[5].toFloat()))
                         
-                        // Şiddeti hesapla
-                        val finalIntensity = ((rawBass / BASS_CEILING) * 255).toInt().coerceIn(0, 255)
-                        
                         if (rawBass < NOISE_GATE) {
+                            vibrator?.cancel() // Bass kesildiği an titreşimi de kesin olarak keser
                             hapticListener?.invoke(0, 0L)
                             return
                         }
 
-                        // Titreşim mantığı
-                        val dynamicDuration = when {
-                            finalIntensity > 200 -> 200L
-                            finalIntensity > 150 -> 150L
-                            finalIntensity > 100 -> 100L
-                            else -> 60L
-                        }
+                        // Titreşim Gücü (0 - 255 | %0 - %100)
+                        val finalIntensity = ((rawBass / BASS_CEILING) * 255).toInt().coerceIn(0, 255)
+                        
+                        // Titreşim Süresi (Anlık bass şiddetine göre 20ms - 1000ms arası)
+                        val dynamicDuration = ((rawBass / BASS_CEILING) * 1000L).toLong().coerceIn(20L, 1000L)
 
                         val now = System.currentTimeMillis()
-                        // Sadece motor müsaitse titretiyoruz ama VERİYİ HER ZAMAN UI'A GÖNDERİYORUZ
                         if (now - lastVibTime >= currentDuration || finalIntensity > currentAmplitude + 20) {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 vibrator?.vibrate(VibrationEffect.createOneShot(dynamicDuration, finalIntensity))
@@ -92,10 +103,9 @@ class VibBoostService : Service() {
                             }
                         }
                         
-                        // UI'ın haberdar olması için her karede (frame) veri gönder
                         hapticListener?.invoke(finalIntensity, dynamicDuration)
                     }
-                }, Visualizer.getMaxCaptureRate(), false, true)
+                }, Visualizer.getMaxCaptureRate() / 2, false, true)
                 enabled = true
             }
         } catch (e: Exception) { e.printStackTrace() }
@@ -110,7 +120,6 @@ class VibBoostService : Service() {
 
     override fun onDestroy() {
         isRunning = false
-        // hapticListener = null // BURAYI SİLDİK: MainActivity tekrar bağlandığında sorun olmaması için.
         visualizer?.enabled = false
         visualizer?.release()
         vibrator?.cancel()
