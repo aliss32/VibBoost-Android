@@ -7,6 +7,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.*
 import android.view.Choreographer
 import android.view.Gravity
+import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -15,16 +16,17 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var actionBtn: Button
     private lateinit var rootLayout: LinearLayout
+    private lateinit var themeSpinner: Spinner
     private var currentHue = 0f
     private var targetIntensity = 0
     private var targetDuration = 0L
     private var currentDisplayIntensity = 0f
-    private val smoothingFactor = 0.15f // 120Hz için akıcı ease-out
+    private val smoothingFactor = 0.15f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setupUI()
-        attachListener() // Servis verilerini dinlemeye başla
+        attachListener()
         startAnimationLoop() 
     }
 
@@ -32,28 +34,29 @@ class MainActivity : AppCompatActivity() {
         rootLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.BLACK) // AMOLED Black
+            setBackgroundColor(Color.BLACK)
         }
 
-        // Temalar
-        val themeBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(0, 40, 0, 0)
-        }
+        val themes = arrayOf("AMOLED", "WHITE", "OCEAN", "DEEP")
+        val hexColors = mapOf("AMOLED" to "#000000", "WHITE" to "#FFFFFF", "OCEAN" to "#001F3F", "DEEP" to "#1A1A1A")
         
-        val colors = mapOf("AMOLED" to "#000000", "WHITE" to "#FFFFFF", "OCEAN" to "#001F3F", "DEEP" to "#1A1A1A")
-        colors.forEach { (name, hex) ->
-            themeBar.addView(Button(this).apply {
-                text = name
-                textSize = 10f
-                setOnClickListener { rootLayout.setBackgroundColor(Color.parseColor(hex)) }
-            })
+        themeSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, themes)
+            setPadding(0, 40, 0, 40)
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    val hex = hexColors[themes[position]] ?: "#000000"
+                    rootLayout.setBackgroundColor(Color.parseColor(hex))
+                }
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+            }
         }
 
         actionBtn = Button(this).apply {
             val size = (resources.displayMetrics.density * 260).toInt()
-            layoutParams = LinearLayout.LayoutParams(size, size)
+            layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                setMargins(0, 100, 0, 0)
+            }
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(Color.parseColor("#333333"))
@@ -63,8 +66,8 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { toggleService() }
         }
 
+        rootLayout.addView(themeSpinner)
         rootLayout.addView(actionBtn)
-        rootLayout.addView(themeBar)
         setContentView(rootLayout)
         
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.VIBRATE, Manifest.permission.POST_NOTIFICATIONS), 1)
@@ -81,23 +84,31 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, VibBoostService::class.java)
         if (!VibBoostService.isRunning) {
             startService(intent)
-            attachListener() // Başlatınca tekrar bağla (Bug çözümü)
+            attachListener()
             actionBtn.text = "ENGINE ACTIVE"
         } else {
             stopService(intent)
-            targetIntensity = 0
-            currentDisplayIntensity = 0f
-            actionBtn.text = "START ENGINE"
-            actionBtn.translationX = 0f
-            actionBtn.translationY = 0f
-            (actionBtn.background as GradientDrawable).setColor(Color.parseColor("#333333"))
+            resetUIToZero()
         }
+    }
+
+    private fun resetUIToZero() {
+        targetIntensity = 0
+        targetDuration = 0L
+        currentDisplayIntensity = 0f
+        actionBtn.text = "START ENGINE"
+        actionBtn.translationX = 0f
+        actionBtn.translationY = 0f
+        (actionBtn.background as GradientDrawable).setColor(Color.parseColor("#333333"))
     }
 
     private fun startAnimationLoop() {
         Choreographer.getInstance().postFrameCallback(object : Choreographer.FrameCallback {
             override fun doFrame(frameTimeNanos: Long) {
-                if (VibBoostService.isRunning || currentDisplayIntensity > 0.1f) {
+                // Eğer servis bildirim üzerinden kapatılırsa UI'yi anında sıfırla
+                if (!VibBoostService.isRunning && actionBtn.text != "START ENGINE") {
+                    resetUIToZero()
+                } else if (VibBoostService.isRunning || currentDisplayIntensity > 0.1f) {
                     updateVisuals()
                 }
                 Choreographer.getInstance().postFrameCallback(this)
@@ -106,16 +117,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateVisuals() {
-        // Ease-out interpolasyon
         currentDisplayIntensity += (targetIntensity - currentDisplayIntensity) * smoothingFactor
 
         if (currentDisplayIntensity > 2) {
-            // Shake efekti (Akıcı)
             val shake = (currentDisplayIntensity / 255f) * 40f
             actionBtn.translationX = ((Math.random() - 0.5) * 2 * shake).toFloat()
             actionBtn.translationY = ((Math.random() - 0.5) * 2 * shake).toFloat()
             
-            // Rainbow efekti (Kaldığı yerden devam eder)
             currentHue = (currentHue + (currentDisplayIntensity / 40f)) % 360f
             val color = Color.HSVToColor(floatArrayOf(currentHue, 0.8f, 1.0f))
             (actionBtn.background as GradientDrawable).setColor(color)
@@ -126,13 +134,12 @@ class MainActivity : AppCompatActivity() {
                 actionBtn.text = "LISTENING..."
                 actionBtn.translationX = 0f
                 actionBtn.translationY = 0f
-                // Rainbow'u bass yokken olduğu renkte sabit tut
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        attachListener() // Uygulamaya dönünce tekrar bağla
+        attachListener()
     }
 }
